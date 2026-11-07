@@ -103,3 +103,141 @@ Suite implementada en `tests/test_products_api.py` utilizando `HttpCase`:
 - `test_06_invalid_date_format_returns_400_not_500`: Comprueba que una fecha mal formada retorna HTTP 400 con código `INVALID_DATE_FORMAT` en vez de explotar en error interno 500.
 - `test_07_invalid_category_returns_error`: Comprueba validación de identificadores de categoría (400 y 404).
 
+
+---
+
+## Tramo B — Creación de Pedidos y Auditoría de Llamadas
+
+### 1. Autenticación NATIVA con API Keys (`res.users.apikeys`)
+- **Cabecera Requerida**: `Authorization: Bearer <api_key>`
+- Implementación respaldada directamente por el modelo nativo `res.users.apikeys` de Odoo 17 (`_check_credentials(scope="rpc", key=token)`).
+- Si la cabecera no se suministra o la clave no es válida, el servidor responde **HTTP 401 Unauthorized**:
+  ```json
+  {
+    "error": {
+      "code": "UNAUTHORIZED",
+      "message": "No se proporcionó la cabecera 'Authorization: Bearer <key>' requerida."
+    }
+  }
+  ```
+
+---
+
+### 2. Creación de Pedidos de Venta
+- **URL**: `POST /api/v1/orders`
+- **Autenticación**: `Authorization: Bearer <api_key>`
+- **Content-Type**: `application/json`
+
+#### Payload de Petición
+```json
+{
+  "vat": "J-30456789-0",
+  "client_order_ref": "ECOMMERCE-1001",
+  "lines": [
+    {
+      "default_code": "MON-027",
+      "qty": 2
+    },
+    {
+      "default_code": "TEC-RGB",
+      "qty": 3
+    }
+  ]
+}
+```
+
+#### Supuesto de Diseño: Estado del Pedido
+> [!IMPORTANT]
+> **Supuesto Documentado**: Los pedidos creados vía API quedan registrados en estado de **Cotización (`draft`)**.
+> **Justificación de Negocio**: Esto garantiza que el departamento de ventas y logística pueda verificar disponibilidad física de almacén, condiciones de entrega y políticas de crédito del cliente antes de confirmar el pedido y reservar formalmente el inventario.
+
+#### Respuesta Exitosa (HTTP 201 Created)
+```json
+{
+  "id": 142,
+  "name": "S00142",
+  "client_order_ref": "ECOMMERCE-1001",
+  "state": "draft",
+  "partner": {
+    "id": 89,
+    "name": "Comercializadora El Sol C.A.",
+    "vat": "J-30456789-0"
+  },
+  "amount_untaxed": 680.0,
+  "amount_tax": 102.0,
+  "amount_total": 782.0,
+  "lines": [
+    {
+      "product_id": 501,
+      "default_code": "MON-027",
+      "name": "Monitor Curvo 27",
+      "qty": 2.0,
+      "price_unit": 250.0,
+      "price_subtotal": 500.0
+    },
+    {
+      "product_id": 502,
+      "default_code": "TEC-RGB",
+      "name": "Teclado Mecánico RGB",
+      "qty": 3.0,
+      "price_unit": 60.0,
+      "price_subtotal": 180.0
+    }
+  ]
+}
+```
+
+#### Manejo de Errores Específicos (HTTP 422 Unprocessable Entity)
+Cumple estrictamente con el formato estandarizado indicando el campo exacto del error:
+
+- **Cliente no encontrado por RIF (`vat`)**:
+  ```json
+  {
+    "error": {
+      "code": "CUSTOMER_NOT_FOUND",
+      "field": "vat",
+      "message": "No existe ningún cliente registrado con el RIF J-99999999-9"
+    }
+  }
+  ```
+- **Producto inexistente en línea específica**:
+  ```json
+  {
+    "error": {
+      "code": "PRODUCT_NOT_FOUND",
+      "field": "lines[1].default_code",
+      "message": "No existe un producto con el código NO-EXISTE-XYZ"
+    }
+  }
+  ```
+- **Cantidad cero o negativa en línea específica**:
+  ```json
+  {
+    "error": {
+      "code": "INVALID_QUANTITY",
+      "field": "lines[0].qty",
+      "message": "La cantidad del producto MON-027 debe ser mayor que cero."
+    }
+  }
+  ```
+
+---
+
+### 3. Modelo de Registro y Auditoría de Llamadas (`shop.api.log`)
+Cada llamada recibida en los endpoints de la API queda registrada en el modelo `shop.api.log`, accesible desde el menú **Ventas > Configuración > Logs API Tienda**.
+
+- **Campos registrados**:
+  - `endpoint`: URL invocada (ej. `/api/v1/orders`).
+  - `method`: Método HTTP (`POST`, `GET`).
+  - `status_code`: Código HTTP de respuesta devuelto (ej. 200, 201, 401, 422).
+  - `duration_ms`: Duración exacta de la petición en milisegundos.
+  - `user_id`: Usuario identificado tras la validación de la API Key.
+  - `request_payload`: Cuerpo JSON de la petición entrante (sanitizado).
+  - `response_payload`: Respuesta enviada al cliente.
+  - `ip_address`: Dirección IP de origen.
+  - `error_message`: Detalle técnico del error en peticiones fallidas.
+
+> [!CAUTION]
+> **Seguridad y Privacidad**:
+> 1. **Aislamiento transaccional**: El log se registra en un cursor independiente (`request.env.registry.cursor()`). Esto asegura que incluso si la transacción de negocio falla con rollback (HTTP 401, 422, 500), el registro de log persiste intacto en la base de datos.
+> 2. **Cero exposición de credenciales**: La clave API de la cabecera `Authorization` jamás se guarda ni se propaga en los campos del log.

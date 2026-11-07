@@ -1,28 +1,22 @@
 import json
+import time
 from datetime import datetime, timezone
 from odoo import http
 from odoo.http import request, Response
+from .common import (
+    error_response,
+    json_response,
+    record_api_log,
+)
 
 
 class ShopIntegrationProductsController(http.Controller):
 
     def _json_response(self, data, status=200):
-        return Response(
-            json.dumps(data, ensure_ascii=False),
-            status=status,
-            content_type="application/json;charset=utf-8",
-        )
+        return json_response(data, status=status)
 
     def _error_response(self, code, message, field=None, status=422):
-        error_body = {
-            "error": {
-                "code": code,
-                "message": message,
-            }
-        }
-        if field:
-            error_body["error"]["field"] = field
-        return self._json_response(error_body, status=status)
+        return error_response(code=code, message=message, field=field, status=status)
 
     @http.route("/api/v1/products", type="http", auth="user", methods=["GET"], csrf=False)
     def get_products(self, **kwargs):
@@ -33,6 +27,9 @@ class ShopIntegrationProductsController(http.Controller):
         - in_stock: Si es 'true' o '1', solo productos con cantidad disponible > 0.
         - updated_since: Fecha ISO 8601 (ej. 'YYYY-MM-DD' o 'YYYY-MM-DDTHH:MM:SS').
         """
+        start_time = time.time()
+        endpoint = "/api/v1/products"
+        method = "GET"
         domain = [
             ("active", "=", True),
             ("sale_ok", "=", True),
@@ -44,21 +41,43 @@ class ShopIntegrationProductsController(http.Controller):
             try:
                 categ_id_int = int(category_id)
             except (ValueError, TypeError):
-                return self._error_response(
+                err = self._error_response(
                     code="INVALID_CATEGORY_ID",
                     field="category_id",
                     message="El parámetro 'category_id' debe ser un número entero válido.",
                     status=400,
                 )
+                record_api_log(
+                    endpoint=endpoint,
+                    method=method,
+                    status_code=400,
+                    duration_ms=(time.time() - start_time) * 1000,
+                    user_id=request.env.user.id if request.env.user else None,
+                    request_payload=kwargs,
+                    response_payload=err.response[0] if err.response else None,
+                    error_message="Parámetro category_id no numérico",
+                )
+                return err
 
             category = request.env["product.category"].browse(categ_id_int)
             if not category.exists():
-                return self._error_response(
+                err = self._error_response(
                     code="CATEGORY_NOT_FOUND",
                     field="category_id",
                     message=f"No existe ninguna categoría de producto con el id {categ_id_int}.",
                     status=404,
                 )
+                record_api_log(
+                    endpoint=endpoint,
+                    method=method,
+                    status_code=404,
+                    duration_ms=(time.time() - start_time) * 1000,
+                    user_id=request.env.user.id if request.env.user else None,
+                    request_payload=kwargs,
+                    response_payload=err.response[0] if err.response else None,
+                    error_message="Categoría no encontrada",
+                )
+                return err
             domain.append(("categ_id", "child_of", categ_id_int))
 
         # 2. Filtro «solo con stock»
@@ -77,12 +96,23 @@ class ShopIntegrationProductsController(http.Controller):
                     parsed_dt = parsed_dt.astimezone(timezone.utc).replace(tzinfo=None)
                 domain.append(("write_date", ">=", parsed_dt))
             except (ValueError, TypeError):
-                return self._error_response(
+                err = self._error_response(
                     code="INVALID_DATE_FORMAT",
                     field="updated_since",
                     message="El parámetro 'updated_since' no tiene un formato de fecha válido. Use el estándar ISO 8601 (ej. 'YYYY-MM-DD' o 'YYYY-MM-DDTHH:MM:SS').",
                     status=400,
                 )
+                record_api_log(
+                    endpoint=endpoint,
+                    method=method,
+                    status_code=400,
+                    duration_ms=(time.time() - start_time) * 1000,
+                    user_id=request.env.user.id if request.env.user else None,
+                    request_payload=kwargs,
+                    response_payload=err.response[0] if err.response else None,
+                    error_message="Formato de fecha inválido",
+                )
+                return err
 
         Product = request.env["product.product"]
         total_records = Product.search_count(domain)
@@ -96,11 +126,22 @@ class ShopIntegrationProductsController(http.Controller):
                 page = max(1, int(page_param or 1))
                 limit = max(1, int(limit_param or 20))
             except (ValueError, TypeError):
-                return self._error_response(
+                err = self._error_response(
                     code="INVALID_PAGINATION",
                     message="Los parámetros 'page' y 'limit' deben ser enteros positivos.",
                     status=400,
                 )
+                record_api_log(
+                    endpoint=endpoint,
+                    method=method,
+                    status_code=400,
+                    duration_ms=(time.time() - start_time) * 1000,
+                    user_id=request.env.user.id if request.env.user else None,
+                    request_payload=kwargs,
+                    response_payload=err.response[0] if err.response else None,
+                    error_message="Paginación inválida",
+                )
+                return err
 
             offset = (page - 1) * limit
             products = Product.search(domain, offset=offset, limit=limit, order="id asc")
@@ -120,7 +161,7 @@ class ShopIntegrationProductsController(http.Controller):
                 for p in products
             ]
 
-            return self._json_response({
+            res_payload = {
                 "total": total_records,
                 "page": page,
                 "limit": limit,
@@ -128,7 +169,17 @@ class ShopIntegrationProductsController(http.Controller):
                 "next": next_page,
                 "prev": prev_page,
                 "products": products_data,
-            })
+            }
+            record_api_log(
+                endpoint=endpoint,
+                method=method,
+                status_code=200,
+                duration_ms=(time.time() - start_time) * 1000,
+                user_id=request.env.user.id if request.env.user else None,
+                request_payload=kwargs,
+                response_payload=res_payload,
+            )
+            return self._json_response(res_payload)
 
         # Sin paginación explícita (respuesta directa de la lista de productos)
         products = Product.search(domain, order="id asc")
@@ -143,5 +194,14 @@ class ShopIntegrationProductsController(http.Controller):
             for p in products
         ]
 
+        record_api_log(
+            endpoint=endpoint,
+            method=method,
+            status_code=200,
+            duration_ms=(time.time() - start_time) * 1000,
+            user_id=request.env.user.id if request.env.user else None,
+            request_payload=kwargs,
+            response_payload=products_data,
+        )
         return self._json_response(products_data)
 

@@ -6,7 +6,10 @@
     "author": "Binaural",
     "license": "LGPL-3",
     "depends": ["base", "sale_management", "stock", "sale_stock"],
-    "data": [],
+    "data": [
+        "security/ir.model.access.csv",
+        "views/api_log_views.xml",
+    ],
     "installable": True,
     "application": True,
 }

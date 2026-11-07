@@ -19,3 +19,27 @@
 5. **Cobertura con HttpCase**:
    - Implementados 7 casos de prueba que cubren filtrado individual, combinado, estructura de respuesta y manejo de errores. Todos pasan con éxito en la base de datos limpia.
 
+
+
+---
+
+## Tramo B — Creación de Pedidos, API Keys y Log de Auditoría
+
+### Decisiones de Diseño y Arquitectura
+1. **Autenticación Nativa con `res.users.apikeys`**:
+   - Para no duplicar mecanismos de hashing o tablas propietarias de credenciales, se aprovechó la arquitectura nativa de Odoo 17 mediante `res.users.apikeys._check_credentials(scope="rpc", key=api_key)`.
+   - Se intercepta la cabecera `Authorization: Bearer <key>`. Si está ausente o no es válida, la API responde con HTTP 401 en formato JSON predecible, evitando redirects web a la pantalla de login.
+2. **Validación Exhaustiva y Localización de Errores**:
+   - Cada línea de pedido se valida individualmente informando el índice exacto en el campo `field`: `lines[i].default_code` o `lines[i].qty`.
+   - Búsqueda de clientes por `vat` tolerante a mayúsculas/minúsculas pero estricta en concordancia.
+   - Cantidades verificadas para ser números positivos (`qty > 0`).
+3. **Decisión de Negocio sobre el Estado del Pedido (`sale.order`)**:
+   - Se optó por dejar el pedido en estado Cotización (`draft`). Justificación: permite al equipo comercial y de almacén validar existencias físicas, líneas arancelarias y disponibilidad real antes de pasar al estado `sale` (bloqueo de inventario y facturación).
+4. **Persistencia Inmune de Logs (`shop.api.log`)**:
+   - Para cumplir el requerimiento de que *"cada llamada queda en el log, también las que fallan"*, se implementó `record_api_log()` utilizando un cursor de base de datos aislado (`with request.env.registry.cursor() as log_cr`). Si el controlador aborta por un error 422 o 401, el rollback de la transacción principal no anula el registro de auditoría.
+   - Se filtran y sanitizan las cargas de datos, garantizando que ninguna API Key sea persistida en texto claro.
+5. **Resultados de Pruebas Automatizadas**:
+   - Suite completa de 13 pruebas ejecutadas contra `prueba_limpia`:
+     - 7 pruebas del Tramo A (`test_products_api.py`)
+     - 6 pruebas del Tramo B (`test_orders_api.py`)
+   - 100% de éxito: `0 failed, 0 error(s) of 13 tests`.
