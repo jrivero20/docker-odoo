@@ -8,6 +8,7 @@
     "depends": ["base", "sale_management", "stock", "sale_stock"],
     "data": [
         "security/ir.model.access.csv",
+        "data/ir_cron_data.xml",
         "views/api_log_views.xml",
     ],
     "installable": True,

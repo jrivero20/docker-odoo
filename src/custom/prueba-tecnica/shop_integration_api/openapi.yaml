@@ -1,0 +1,422 @@
+openapi: 3.0.3
+info:
+  title: API de Integración para Tienda en Línea - Odoo 17
+  description: |
+    API REST para la sincronización bidireccional entre la tienda en línea y Odoo 17.
+    Permite consultar catálogo de productos y existencias en tiempo real, sincronizar pedidos de venta de forma idempotente y recibir notificaciones automáticas (webhooks) al despachar mercancía.
+  version: 1.0.0
+  contact:
+    name: Equipo de Integraciones Binaural
+    email: soporte@binaural.com
+
+servers:
+  - url: /
+    description: Servidor local / producción Odoo
+
+paths:
+  /api/v1/products:
+    get:
+      summary: Catálogo de productos y existencias
+      description: |
+        Retorna la lista de productos vendibles y activos (`sale_ok = true` y `active = true`).
+        El cálculo de stock disponible se ejecuta en batch sin consultas N+1 a la base de datos.
+      security:
+        - CookieAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: category_id
+          in: query
+          description: Identificador de la categoría. Incluye subcategorías automáticamente (`child_of`).
+          required: false
+          schema:
+            type: integer
+            example: 5
+        - name: in_stock
+          in: query
+          description: Si es `true` o `1`, retorna exclusivamente productos con existencias disponibles (`qty_available > 0`).
+          required: false
+          schema:
+            type: boolean
+            example: true
+        - name: updated_since
+          in: query
+          description: Fecha/hora ISO 8601 (ej. `YYYY-MM-DD` o `YYYY-MM-DDTHH:MM:SSZ`). Filtra productos modificados desde esa fecha.
+          required: false
+          schema:
+            type: string
+            format: date-time
+            example: "2026-11-01T00:00:00Z"
+        - name: page
+          in: query
+          description: Número de página para navegación paginada.
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            example: 1
+        - name: limit
+          in: query
+          description: Cantidad de registros por página.
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            example: 20
+      responses:
+        '200':
+          description: Consulta exitosa de catálogo.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: array
+                    items:
+                      $ref: '#/components/schemas/ProductItem'
+                  - $ref: '#/components/schemas/ProductPaginatedResponse'
+        '400':
+          description: Parámetros inválidos (fecha con formato erróneo o paginación no entera).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalid_date:
+                  summary: Formato de fecha inválido
+                  value:
+                    error:
+                      code: "INVALID_DATE_FORMAT"
+                      field: "updated_since"
+                      message: "El parámetro 'updated_since' no tiene un formato de fecha válido. Use el estándar ISO 8601 (ej. 'YYYY-MM-DD' o 'YYYY-MM-DDTHH:MM:SS')."
+        '404':
+          description: Categoría no encontrada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                cat_not_found:
+                  value:
+                    error:
+                      code: "CATEGORY_NOT_FOUND"
+                      field: "category_id"
+                      message: "No existe ninguna categoría de producto con el id 999999."
+
+  /api/v1/orders:
+    post:
+      summary: Creación de pedido de venta
+      description: |
+        Crea un nuevo pedido de venta en Odoo a partir de la orden recibida en la tienda web.
+        Soporta idempotencia mediante la cabecera `Idempotency-Key`: reintentos con el mismo contenido devuelven el pedido original (HTTP 200/201), mientras que reintentos con la misma clave pero contenido diferente retornan HTTP 409 Conflict.
+        
+        **Supuesto de Negocio**: El pedido se crea en estado de Cotización (`draft`) para que el equipo comercial y logístico verifique solvencia y existencias antes de confirmarlo.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          description: Clave única por transacción generada por la tienda para evitar duplicados en reintentos.
+          required: false
+          schema:
+            type: string
+            example: "order-checkout-uuid-8831"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderCreateRequest'
+      responses:
+        '201':
+          description: Pedido de venta creado exitosamente.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '200':
+          description: Petición idempotente repetida. Devuelve el pedido ya creado previamente.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '400':
+          description: JSON mal formado en el cuerpo de la petición.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: API Key ausente, revocada o inválida.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                unauthorized:
+                  value:
+                    error:
+                      code: "UNAUTHORIZED"
+                      message: "No se proporcionó la cabecera 'Authorization: Bearer <key>' requerida."
+        '409':
+          description: Conflicto de idempotencia (misma clave enviada con diferente contenido).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                conflict:
+                  value:
+                    error:
+                      code: "IDEMPOTENCY_CONFLICT"
+                      message: "La clave de idempotencia 'order-checkout-uuid-8831' ya fue utilizada previamente con un contenido diferente."
+        '422':
+          description: Error semántico de validación (cliente, producto o cantidad no válidos).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                customer_not_found:
+                  summary: RIF de cliente no registrado
+                  value:
+                    error:
+                      code: "CUSTOMER_NOT_FOUND"
+                      field: "vat"
+                      message: "No existe ningún cliente registrado con el RIF J-99999999-9"
+                product_not_found:
+                  summary: Producto no encontrado en línea
+                  value:
+                    error:
+                      code: "PRODUCT_NOT_FOUND"
+                      field: "lines[1].default_code"
+                      message: "No existe un producto con el código ABC-123"
+                invalid_quantity:
+                  summary: Cantidad cero o negativa
+                  value:
+                    error:
+                      code: "INVALID_QUANTITY"
+                      field: "lines[0].qty"
+                      message: "La cantidad del producto LAP-001 debe ser mayor que cero."
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: Clave API nativa de Odoo (`res.users.apikeys`) configurada en el perfil del usuario de integración.
+    CookieAuth:
+      type: apiKey
+      in: cookie
+      name: session_id
+      description: Sesión autenticada en Odoo Web (`auth="user"`).
+
+  schemas:
+    ProductItem:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 105
+        code:
+          type: string
+          example: "LAP-001"
+        name:
+          type: string
+          example: "Laptop Pro 15"
+        price:
+          type: number
+          format: float
+          example: 1200.0
+        qty_available:
+          type: number
+          format: float
+          example: 15.0
+
+    ProductPaginatedResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+          example: 50
+        page:
+          type: integer
+          example: 1
+        limit:
+          type: integer
+          example: 20
+        total_pages:
+          type: integer
+          example: 3
+        next:
+          type: integer
+          nullable: true
+          example: 2
+        prev:
+          type: integer
+          nullable: true
+          example: null
+        products:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProductItem'
+
+    OrderCreateRequest:
+      type: object
+      required:
+        - vat
+        - lines
+      properties:
+        vat:
+          type: string
+          description: RIF o documento de identidad del cliente registrado en Odoo.
+          example: "J-30456789-0"
+        client_order_ref:
+          type: string
+          description: Número o identificador único del pedido en la tienda web.
+          example: "TIENDA-1001"
+        lines:
+          type: array
+          description: Listado de artículos a incluir en la orden de venta.
+          minItems: 1
+          items:
+            type: object
+            required:
+              - default_code
+              - qty
+            properties:
+              default_code:
+                type: string
+                description: Referencia interna (código SKU) del producto en Odoo.
+                example: "MON-027"
+              qty:
+                type: number
+                minimum: 0.0001
+                description: Cantidad solicitada (debe ser estrictamente positiva).
+                example: 2
+
+    OrderResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 142
+        name:
+          type: string
+          example: "S00142"
+        client_order_ref:
+          type: string
+          example: "TIENDA-1001"
+        state:
+          type: string
+          example: "draft"
+        partner:
+          type: object
+          properties:
+            id:
+              type: integer
+              example: 89
+            name:
+              type: string
+              example: "Comercializadora El Sol C.A."
+            vat:
+              type: string
+              example: "J-30456789-0"
+        amount_untaxed:
+          type: number
+          format: float
+          example: 680.0
+        amount_tax:
+          type: number
+          format: float
+          example: 102.0
+        amount_total:
+          type: number
+          format: float
+          example: 782.0
+        lines:
+          type: array
+          items:
+            type: object
+            properties:
+              product_id:
+                type: integer
+                example: 501
+              default_code:
+                type: string
+                example: "MON-027"
+              name:
+                type: string
+                example: "Monitor Curvo 27"
+              qty:
+                type: number
+                example: 2.0
+              price_unit:
+                type: number
+                example: 250.0
+              price_subtotal:
+                type: number
+                example: 500.0
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              example: "PRODUCT_NOT_FOUND"
+            field:
+              type: string
+              description: Nombre exacto del campo o posición del array causante del error.
+              example: "lines[1].default_code"
+            message:
+              type: string
+              example: "No existe un producto con el código ABC-123"
+
+    DeliveryWebhookPayload:
+      type: object
+      description: Notificación saliente enviada vía HTTP POST a la tienda cuando se valida el despacho de mercancía en almacén.
+      properties:
+        event:
+          type: string
+          example: "order.delivery_validated"
+        order_id:
+          type: integer
+          example: 142
+        order_name:
+          type: string
+          example: "S00142"
+        client_order_ref:
+          type: string
+          example: "TIENDA-1001"
+        picking_id:
+          type: integer
+          example: 88
+        picking_name:
+          type: string
+          example: "WH/OUT/00088"
+        delivery_date:
+          type: string
+          format: date-time
+          example: "2026-11-07 19:30:00"
+        lines:
+          type: array
+          items:
+            type: object
+            properties:
+              product_id:
+                type: integer
+                example: 501
+              default_code:
+                type: string
+                example: "MON-027"
+              name:
+                type: string
+                example: "Monitor Curvo 27"
+              quantity_delivered:
+                type: number
+                example: 2.0
+

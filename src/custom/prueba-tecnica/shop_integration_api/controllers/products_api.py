@@ -150,15 +150,18 @@ class ShopIntegrationProductsController(http.Controller):
             next_page = page + 1 if page < total_pages else None
             prev_page = page - 1 if page > 1 else None
 
+            # Optimización O(1) queries: batch read para evitar N+1 queries en stock
+            fields_to_read = ["id", "default_code", "name", "list_price", "qty_available"]
+            products_records = products.read(fields_to_read)
             products_data = [
                 {
-                    "id": p.id,
-                    "code": p.default_code or "",
-                    "name": p.name,
-                    "price": p.list_price,
-                    "qty_available": p.qty_available,
+                    "id": rec["id"],
+                    "code": rec["default_code"] or "",
+                    "name": rec["name"],
+                    "price": rec["list_price"],
+                    "qty_available": rec["qty_available"],
                 }
-                for p in products
+                for rec in products_records
             ]
 
             res_payload = {
@@ -183,15 +186,17 @@ class ShopIntegrationProductsController(http.Controller):
 
         # Sin paginación explícita (respuesta directa de la lista de productos)
         products = Product.search(domain, order="id asc")
+        fields_to_read = ["id", "default_code", "name", "list_price", "qty_available"]
+        products_records = products.read(fields_to_read)
         products_data = [
             {
-                "id": p.id,
-                "code": p.default_code or "",
-                "name": p.name,
-                "price": p.list_price,
-                "qty_available": p.qty_available,
+                "id": rec["id"],
+                "code": rec["default_code"] or "",
+                "name": rec["name"],
+                "price": rec["list_price"],
+                "qty_available": rec["qty_available"],
             }
-            for p in products
+            for rec in products_records
         ]
 
         record_api_log(

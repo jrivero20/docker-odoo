@@ -43,3 +43,25 @@
      - 7 pruebas del Tramo A (`test_products_api.py`)
      - 6 pruebas del Tramo B (`test_orders_api.py`)
    - 100% de éxito: `0 failed, 0 error(s) of 13 tests`.
+
+
+---
+
+## Tramo C — Optimización, Idempotencia, Webhooks y OpenAPI
+
+### Decisiones de Diseño y Arquitectura
+1. **Control de Idempotencia Canónico**:
+   - Para evaluar si el contenido es idéntico independientemente del orden de las claves JSON enviadas por el cliente, se serializa el payload canónicamente con `json.dumps(payload, sort_keys=True, separators=(',', ':'))` y se genera un hash SHA-256.
+   - Modelo `shop.api.idempotency`: almacena la clave, el hash, el pedido asociado y la respuesta original para reentregarla de forma instantánea sin regenerar registros.
+   - Si la clave coincide pero el hash no, se emite un HTTP 409 Conflict explícito.
+2. **Mitigación del Problema N+1 en Stock**:
+   - Se reemplazó el acceso directo a nivel de objeto por `products.read(["id", "default_code", "name", "list_price", "qty_available"])`, lo cual dispara la evaluación agrupada en lote en PostgreSQL por medio del motor ORM de Odoo 17.
+   - La prueba automatizada `test_04_query_count_does_not_grow_with_product_count` verifica cuantitativamente que pasar de 2 a 12 productos mantiene el número de consultas a la base de datos en orden O(1).
+3. **Resiliencia y Asincronía en Webhooks de Entrega**:
+   - La entrega de mercancía es una operación crítica en almacén. En ningún caso debe verse supeditada al estado de salud de la plataforma de e-commerce.
+   - Se interceptó `stock.picking._action_done()` encolando el evento en el modelo `shop.webhook.queue`. El intento inicial se ejecuta con timeout corto protegido; ante fallas de conectividad, una acción planificada (`ir.cron`) reintenta la entrega con backoff sin perturbar al operario en Odoo.
+4. **Especificación OpenAPI 3.0**:
+   - Entregada en `openapi.yaml`, detallando cabeceras de autorización, contratos de petición y respuesta, modelos de datos, códigos de error y la estructura de eventos de entrega.
+5. **Cobertura Total de Pruebas**:
+   - 18 pruebas ejecutadas sobre la base de datos `prueba_limpia` (7 de catálogo + 6 de órdenes + 5 de características avanzadas).
+   - 100% de éxito: `0 failed, 0 error(s) of 18 tests`.

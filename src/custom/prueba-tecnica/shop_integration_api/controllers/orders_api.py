@@ -1,3 +1,4 @@
+import hashlib
 import json
 import time
 from odoo import http
@@ -17,6 +18,7 @@ class ShopIntegrationOrdersController(http.Controller):
         """Creación de pedidos de venta desde la tienda en línea.
 
         Autenticación: Authorization: Bearer <key> (nativa con res.users.apikeys).
+        Idempotencia: Idempotency-Key en la cabecera HTTP.
         Payload esperado:
         {
             "vat": "J-12345678-0",
@@ -72,7 +74,53 @@ class ShopIntegrationOrdersController(http.Controller):
             )
             return err
 
-        # 3. Validación de RIF del cliente (vat)
+        # 3. Verificación de Idempotencia (Tramo C)
+        idempotency_key = request.httprequest.headers.get("Idempotency-Key", "").strip()
+        current_hash = None
+        if idempotency_key:
+            canonical_payload = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+            current_hash = hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
+
+            idem_record = env["shop.api.idempotency"].sudo().search(
+                [("key", "=", idempotency_key)], limit=1
+            )
+            if idem_record:
+                if idem_record.request_hash == current_hash:
+                    # Misma clave y mismo contenido: devuelve el pedido original sin duplicar
+                    cached_response = json.loads(idem_record.response_json)
+                    duration_ms = (time.time() - start_time) * 1000
+                    record_api_log(
+                        endpoint=endpoint,
+                        method=method,
+                        status_code=200,
+                        duration_ms=duration_ms,
+                        user_id=user.id,
+                        request_payload=payload,
+                        response_payload=cached_response,
+                        error_message="Petición idempotente: pedido ya existente retornado",
+                    )
+                    return json_response(cached_response, status=200)
+                else:
+                    # Misma clave con contenido diferente: HTTP 409 Conflict
+                    err = error_response(
+                        code="IDEMPOTENCY_CONFLICT",
+                        message=f"La clave de idempotencia '{idempotency_key}' ya fue utilizada previamente con un contenido diferente.",
+                        status=409,
+                    )
+                    duration_ms = (time.time() - start_time) * 1000
+                    record_api_log(
+                        endpoint=endpoint,
+                        method=method,
+                        status_code=409,
+                        duration_ms=duration_ms,
+                        user_id=user.id,
+                        request_payload=payload,
+                        response_payload=err.response[0] if err.response else None,
+                        error_message=f"Conflicto de idempotencia en clave {idempotency_key}",
+                    )
+                    return err
+
+        # 4. Validación de RIF del cliente (vat)
         vat = payload.get("vat")
         if not vat or not str(vat).strip():
             err = error_response(
@@ -119,7 +167,7 @@ class ShopIntegrationOrdersController(http.Controller):
             )
             return err
 
-        # 4. Validación de líneas de productos (lines)
+        # 5. Validación de líneas de productos (lines)
         lines = payload.get("lines")
         if not lines or not isinstance(lines, list) or len(lines) == 0:
             err = error_response(
@@ -255,7 +303,7 @@ class ShopIntegrationOrdersController(http.Controller):
 
             validated_lines.append((product, qty_val))
 
-        # 5. Creación del pedido de venta
+        # 6. Creación del pedido de venta
         client_ref = payload.get("client_order_ref") or False
         order_line_commands = [
             (
@@ -305,6 +353,15 @@ class ShopIntegrationOrdersController(http.Controller):
                 for line in order.order_line
             ],
         }
+
+        # Guardar registro de idempotencia si se proporcionó cabecera
+        if idempotency_key and current_hash:
+            env["shop.api.idempotency"].sudo().create({
+                "key": idempotency_key,
+                "request_hash": current_hash,
+                "order_id": order.id,
+                "response_json": json.dumps(response_data, ensure_ascii=False),
+            })
 
         duration_ms = (time.time() - start_time) * 1000
         record_api_log(

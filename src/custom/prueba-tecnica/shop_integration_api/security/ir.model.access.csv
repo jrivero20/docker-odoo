@@ -1,4 +1,7 @@
 id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
 access_shop_api_log_system,access_shop_api_log_system,model_shop_api_log,base.group_system,1,1,1,1
 access_shop_api_log_user,access_shop_api_log_user,model_shop_api_log,base.group_user,1,0,0,0
-
+access_shop_api_idempotency_system,access_shop_api_idempotency_system,model_shop_api_idempotency,base.group_system,1,1,1,1
+access_shop_api_idempotency_user,access_shop_api_idempotency_user,model_shop_api_idempotency,base.group_user,1,0,0,0
+access_shop_webhook_queue_system,access_shop_webhook_queue_system,model_shop_webhook_queue,base.group_system,1,1,1,1
+access_shop_webhook_queue_user,access_shop_webhook_queue_user,model_shop_webhook_queue,base.group_user,1,0,0,0

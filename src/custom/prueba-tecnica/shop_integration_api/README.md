@@ -241,3 +241,72 @@ Cada llamada recibida en los endpoints de la API queda registrada en el modelo `
 > **Seguridad y Privacidad**:
 > 1. **Aislamiento transaccional**: El log se registra en un cursor independiente (`request.env.registry.cursor()`). Esto asegura que incluso si la transacción de negocio falla con rollback (HTTP 401, 422, 500), el registro de log persiste intacto en la base de datos.
 > 2. **Cero exposición de credenciales**: La clave API de la cabecera `Authorization` jamás se guarda ni se propaga en los campos del log.
+
+---
+
+## Tramo C — Optimización, Idempotencia, Webhooks y OpenAPI
+
+### 1. Paginación con Metadatos
+El endpoint `GET /api/v1/products` soporta paginación opcional pasando los parámetros `page` y `limit`.
+Estructura de respuesta con metadatos:
+```json
+{
+  "total": 50,
+  "page": 1,
+  "limit": 20,
+  "total_pages": 3,
+  "next": 2,
+  "prev": null,
+  "products": [ ... ]
+}
+```
+
+### 2. Optimización de Stock sin N+1 Queries
+- **Problema clásico**: Recorrer una lista de productos consultando `qty_available` de manera individual genera consultas repetitivas a `stock_quant` / `stock_move` proporcionales al número de registros ($O(N)$).
+- **Solución implementada**: Uso de lectura en bloque (`products.read(["id", "default_code", "name", "list_price", "qty_available"])`) que delega en el prefetching batch de Odoo 17, ejecutando el cómputo de existencias de todo el recordset en una única consulta agrupada SQL ($O(1)$ consultas).
+- **Verificación**: Comprobado en la prueba automatizada `test_04_query_count_does_not_grow_with_product_count`, donde la consulta de 12 productos consume la misma o menor cantidad de queries que la consulta de 2 productos.
+
+### 3. Idempotencia en Creación de Pedidos (`Idempotency-Key`)
+Para garantizar que reintentos de red o caídas de conexión por parte de la tienda no creen órdenes duplicadas:
+- **Cabecera**: `Idempotency-Key: <clave_unica>`
+- **Misma clave + Mismo contenido**: Retorna el pedido original ya creado con código HTTP 200 (o 201 en el primer intento).
+- **Misma clave + Distinto contenido**: El servidor detecta una reutilización inconsistente de la clave y rechaza la petición con **HTTP 409 Conflict**:
+  ```json
+  {
+    "error": {
+      "code": "IDEMPOTENCY_CONFLICT",
+      "message": "La clave de idempotencia 'IDEM-TEST-2002' ya fue utilizada previamente con un contenido diferente."
+    }
+  }
+  ```
+
+### 4. Webhook Saliente de Entrega Desacoplado y Tolerante a Fallos
+Cuando el personal de almacén valida una entrega de cliente (`stock.picking` de salida asociado a una venta):
+- Se encola automáticamente un evento en `shop.webhook.queue` hacia la URL configurada en el parámetro del sistema `shop_integration.webhook_delivery_url`.
+- **Garantía de No Bloqueo**: El envío se realiza con un timeout estricto de 3 segundos y captura integral de errores. Si la tienda externa está caída o no responde:
+  - El usuario en Odoo valida el albarán con normalidad sin percibir retrasos ni ventanas de error.
+  - El registro queda en estado `pending` con reintentos exponenciales gestionados automáticamente por una acción planificada (`ir.cron`).
+
+#### Payload del Webhook (`order.delivery_validated`)
+```json
+{
+  "event": "order.delivery_validated",
+  "order_id": 142,
+  "order_name": "S00142",
+  "client_order_ref": "TIENDA-1001",
+  "picking_id": 88,
+  "picking_name": "WH/OUT/00088",
+  "delivery_date": "2026-11-07 19:30:00",
+  "lines": [
+    {
+      "product_id": 501,
+      "default_code": "MON-027",
+      "name": "Monitor Curvo 27",
+      "quantity_delivered": 2.0
+    }
+  ]
+}
+```
+
+### 5. Documentación OpenAPI 3.0
+El contrato completo de la API está documentado formalmente bajo el estándar OpenAPI 3.0 en [`openapi.yaml`](file:///c:/Users/PC/Desktop/pruebaBinaural/src/custom/prueba-tecnica/shop_integration_api/openapi.yaml).
