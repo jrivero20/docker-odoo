@@ -1,4 +1,66 @@
-# Binaural Workspace — Multi-Instance Odoo Docker
+# Binaural Workspace — Evaluación Técnica Desarrollador Odoo
+
+> **Versión de Odoo seleccionada**: **Odoo 17.0** (configurada en el archivo `.env` mediante `ODOO_VERSION=17.0`).
+
+Este repositorio contiene la solución completa de los 4 ejercicios de la evaluación técnica para desarrollador Odoo en Binaural, estructurado sobre la plataforma multi-instancia Docker del workspace.
+
+---
+
+## Ejecución con Docker
+
+### 1. Variables de Entorno y Configuración
+El archivo `.env` ya viene configurado en la raíz con:
+```bash
+ODOO_VERSION=17.0
+```
+Y el archivo `instances.json` define la instancia de trabajo `prueba-tecnica`:
+```json
+{
+  "instances": {
+    "prueba-tecnica": {
+      "odoo_version": "17.0",
+      "external_port": 8069,
+      "database": "pg16",
+      "odoo_config": "17.0_default",
+      "overwrite_odoo_config": {
+        "addons": ["src/custom/prueba-tecnica"],
+        "dev_mode": true
+      }
+    }
+  }
+}
+```
+
+### 2. Construir y Levantar el Entorno
+```bash
+# Construir contenedores y generar compose
+./odoo build
+
+# Iniciar la instancia
+./odoo start prueba-tecnica
+```
+
+### 3. Ejecutar las Pruebas sobre Base Limpia
+Para correr la suite de pruebas automatizadas sobre una base de datos nueva (`prueba_limpia`), tal como requiere la pauta:
+```bash
+./odoo test prueba-tecnica -d prueba_limpia -m shop_integration_api,fleet_inspection,sale_commission,payment_request
+```
+*(También se puede invocar como `./odoo test -d prueba_limpia -m shop_integration_api,fleet_inspection,sale_commission,payment_request`)*.
+
+---
+
+## Módulos Entregados
+
+| Ejercicio | Módulo | Tramos | Estado | Entregables y Pruebas |
+| :--- | :--- | :--- | :--- | :--- |
+| **1. Integración con Tienda Web** | `shop_integration_api` | **A, B, C** | **100% Pasando** | REST API, API keys nativas, `shop.api.log`, idempotencia 409, consultas $O(1)$ stock, webhooks desacoplados, `openapi.yaml`, `README.md`, `AI_LOG.md`. (18 tests). |
+| **2. Migración Inspecciones** | `fleet_inspection` | **A, B, C** | **100% Pasando** | Migrado de Odoo 16 a 17, CTE batch migration script, benchmark 10k registros en 0.148s, `MIGRATION_PLAN.md`, `README.md`, `AI_LOG.md`. (14 tests). |
+| **3. Ticket Urgente T-200** | `sale_commission` | **A, B, C** | **100% Pasando** | Hotfix en rama `hotfix/T-200` y merge a principal. Permisos ACL + corrección comisión, script de auditoría, `INCIDENT.md`, `AI_LOG.md`. (7 tests). |
+| **4. Solicitudes de Pago** | `payment_request` | **A, B, C** | **100% Pasando** | Flujo completo, niveles dinámicos, multimoneda USD-VES, row locking BD (`FOR UPDATE NOWAIT`), reporte PDF con auditoría, `ARCHITECTURE.md`, `README.md`, `AI_LOG.md`. (17 tests). |
+
+---
+
+# Documentación de Referencia del Workspace (Binaural Docker-Odoo)
 
 Entorno de desarrollo que permite levantar **múltiples instancias de Odoo** (diferentes versiones, diferentes proyectos) desde un único directorio, cada una con sus propios addons, base de datos y puerto. Todo se configura en un archivo `instances.json`.
 

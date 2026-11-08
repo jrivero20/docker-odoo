@@ -1,0 +1,48 @@
+{
+  "odoo_configs": {
+    "17.0_default": {
+      "admin_password": "admin",
+      "workers": 0,
+      "without_demo": true,
+      "list_db": true,
+      "proxy_mode": false,
+      "limit_memory_soft": 12000000000,
+      "limit_memory_hard": 13000000000,
+      "max_cron_threads": 1,
+      "limit_time_real_cron": 0,
+      "limit_time_real": 3600,
+      "limit_time_cpu": 60,
+      "db_maxconn": 200,
+      "unaccent": false,
+      "server_wide_modules": "",
+      "addons": []
+    }
+  },
+  "databases": {
+    "pg16": {
+      "postgres_version": 16,
+      "port": 5432,
+      "expose_host_port": false,
+      "user": "odoo",
+      "password": "odoo",
+      "bootstrap_user": "odoo_bootstrap",
+      "bootstrap_password": "odoo",
+      "config": "postgresql.conf"
+    }
+  },
+  "instances": {
+    "prueba-tecnica": {
+      "odoo_version": "17.0",
+      "external_port": 8069,
+      "database": "pg16",
+      "odoo_config": "17.0_default",
+      "overwrite_odoo_config": {
+        "addons": [
+          "src/custom/prueba-tecnica"
+        ],
+        "dev_mode": true
+      }
+    }
+  }
+}
+
