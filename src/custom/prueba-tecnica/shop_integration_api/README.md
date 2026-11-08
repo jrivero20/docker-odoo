@@ -2,6 +2,8 @@
 
 Módulo de integración REST API para la sincronización de catálogo de productos, existencias en tiempo real y recepción de pedidos de venta desde plataformas de comercio electrónico externas.
 
+> 📖 **Consulte el [Manual de Usuario e Integración](file:///c:/Users/PC/Desktop/pruebaBinaural/src/custom/prueba-tecnica/shop_integration_api/MANUAL_USUARIO.md)** para una guía funcional y operativa sobre autenticación con API Keys, consumo de endpoints y monitoreo de logs desde Odoo.
+
 ---
 
 ## Tramo A — Catálogo de Productos y Existencias

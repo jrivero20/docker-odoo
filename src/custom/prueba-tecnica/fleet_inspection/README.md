@@ -2,6 +2,8 @@
 
 Módulo de gestión de inspecciones para la flota de vehículos con checklist dinámico, validación de puntos críticos, seguimiento de estados y control de vencimientos.
 
+> 📖 **Consulte el [Manual de Usuario Paso a Paso](file:///c:/Users/PC/Desktop/pruebaBinaural/src/custom/prueba-tecnica/fleet_inspection/MANUAL_USUARIO.md)** para una guía funcional completa sobre roles, vistas, checklist preventivo y flujo de aprobación de inspecciones.
+
 ## Tramos completados
 - **Tramo A:** Migración completa a Odoo 17.0 (manifiesto, modelos, vistas, seguridad, reportes y pruebas automatizadas).
 - **Tramo B:** Conversión del tipo de vehículo a catálogo Many2one (`fleet.inspection.vehicle.type`), script de migración en `migrations/17.0.2.0.0/post-migrate.py` sin pérdida de datos (preservando 'otro') y prueba unitaria de migración.

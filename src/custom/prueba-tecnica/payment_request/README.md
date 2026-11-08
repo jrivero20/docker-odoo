@@ -2,6 +2,8 @@
 
 Módulo para la gestión y control de solicitudes de pago a proveedores con flujo de aprobación jerárquico y registro en contabilidad/tesorería.
 
+> 📖 **Consulte el [Manual de Usuario Paso a Paso](file:///c:/Users/PC/Desktop/pruebaBinaural/src/custom/prueba-tecnica/payment_request/MANUAL_USUARIO.md)** para una guía funcional completa sobre roles, vistas, flujos de aprobación y registro de pagos.
+
 ---
 
 ## Supuestos y Preguntas al Cliente
